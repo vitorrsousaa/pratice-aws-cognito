@@ -13,24 +13,135 @@ provider:
   runtime: nodejs20.x
   deploymentMethod: direct
   architecture: arm64
+  iam:
+    role:
+      statements:
+        - Effect: "Allow"
+          Action:
+            - "cognito-idp:AdminGetUser"
+          Resource: !GetAtt UserPoolResource.Arn
+  environment:
+    COGNITO_CLIENT_ID: !Ref UserPoolClient
+    COGNITO_POOL_ID: !Ref UserPoolResource
+  httpApi:
+    authorizers:
+      CognitoAuthorizer:
+        type: jwt
+        identitySource: $request.header.Authorization
+        issuerUrl: !GetAtt UserPoolResource.ProviderURL
+        audience:
+          - !Ref UserPoolClient
 
 custom:
   esbuild:
-  bundle: true
-  minify: true
-  sourcemap: false
-  target: node20
-  exclude:
-    - '@aws-sdk/*'
-  define:
-    require.resolve: undefined
-  platform: node
-  concurrency: 10
+    bundle: true
+    minify: true
+    sourcemap: false
+    target: node20
+    exclude:
+      - '@aws-sdk/*'
+    define:
+      require.resolve: undefined
+    platform: node
+    concurrency: 10
+
+resources:
+  Resources:
+  # Identificador do resource
+    UserPoolResource:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        DeletionProtection: ACTIVE
+        UserPoolName: UserPoolResource
+        MfaConfiguration: OFF
+        AutoVerifiedAttributes:
+          - email
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: false
+        UsernameAttributes:
+          - email
+        AccountRecoverySetting:
+          RecoveryMechanisms:
+            - Name: verified_email
+              Priority: 1
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireNumbers: true
+            RequireSymbols: true
+            RequireUppercase: true
+            TemporaryPasswordValidityDays: 2
+        Schema:
+          - Name: given_name
+            Required: true
+            Mutable: true
+            AttributeDataType: String
+    UserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: UserPoolClient
+        UserPoolId:
+          Ref: UserPoolResource
+        ExplicitAuthFlows:
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        TokenValidityUnits:
+          AccessToken: hours
+          RefreshToken: hours
+        AccessTokenValidity: 3
+        RefreshTokenValidity: 48
 
 functions:
-  hello:
-    handler: src/functions/hello.handler
+  customMessage:
+    handler: src/functions/customMessage.handler
+    events:
+      - cognitoUserPool:
+          pool: !Ref UserPoolResource
+          trigger: CustomMessage
+          existing: true
+          forceDeploy: true
+  resetPassword:
+    handler: src/functions/resetPassword.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /auth/reset-password
+  forgotPassword:
+    handler: src/functions/forgotPassword.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /auth/forgot-password
+  signup:
+    handler: src/functions/signup.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /auth/signup
+  signin:
+    handler: src/functions/signin.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /auth/signin
+  refreshToken:
+    handler: src/functions/refreshToken.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /auth/refresh-token
+  accountConfirmation:
+    handler: src/functions/accountConfirmation.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /auth/account-confirmation
+  profile:
+    handler: src/functions/profile.handler
     events:
       - httpApi:
           method: GET
-          path: /hello
+          path: /profile
+          authorizer:
+            name: CognitoAuthorizer
